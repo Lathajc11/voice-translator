@@ -625,7 +625,8 @@ async def translate_text(data: dict):
         ],
     )
 
-    translated = response.choices[0].message.content.strip()
+    content = response.choices[0].message.content
+    translated = content.strip() if content else ""
     return {"translated_text": translated}
   except Exception as e:
     return JSONResponse(status_code=500, content={"error": str(e)})
@@ -642,23 +643,6 @@ async def ask_assistant(data: dict):
 
   # 1) Get answer in English
   try:
-    base_answer = groq_client.chat_completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {
-                "role":
-                "system",
-                "content":
-                "You are a helpful, concise assistant. Answer clearly in English in 2-4 sentences.",
-            },
-            {
-                "role": "user",
-                "content": question
-            },
-        ],
-    )
-  except AttributeError:
-    # Correct method for Groq python client is chat.completions.create
     base_answer = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[
@@ -674,8 +658,11 @@ async def ask_assistant(data: dict):
             },
         ],
     )
+  except Exception as e:
+    return JSONResponse(status_code=500, content={"error": str(e)})
 
-  answer_en = base_answer.choices[0].message.content.strip()
+  content_en = base_answer.choices[0].message.content
+  answer_en = content_en.strip() if content_en else ""
 
   # 2) Translate answer if needed
   if target_language and target_language.lower() != "english":
@@ -698,7 +685,8 @@ async def ask_assistant(data: dict):
               },
           ],
       )
-      answer_translated = translated_resp.choices[0].message.content.strip()
+      translated_content = translated_resp.choices[0].message.content
+      answer_translated = translated_content.strip() if translated_content else answer_en
     except Exception:
       answer_translated = answer_en  # fallback
   else:
