@@ -35,7 +35,7 @@ def ui():
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
+  <link rel="icon" href="data:,">
   <title>AI Voice Translator & Assistant</title>
   <style>
     :root {
@@ -1295,7 +1295,13 @@ function renderFavorites() {
 }
 
 function escapeHtml(str) {
-  return str.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, String.fromCharCode(38) + 'amp;')
+    .replace(/</g, String.fromCharCode(38) + 'lt;')
+    .replace(/>/g, String.fromCharCode(38) + 'gt;')
+    .replace(/"/g, String.fromCharCode(38) + 'quot;')
+    .replace(/'/g, String.fromCharCode(38) + '#39;');
 }
 
 window.loadHistoryItem = (id) => {
