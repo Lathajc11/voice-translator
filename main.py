@@ -1,9 +1,13 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Depends, Query
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from groq import Groq
 import os
 import urllib.parse
+import razorpay
+import hmac
+import hashlib
+from datetime import datetime
 
 app = FastAPI()
 
@@ -17,6 +21,32 @@ app.add_middleware(
 
 # Groq client (uses your GROQ_API_KEY from Secrets)
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
+
+razorpay_client = None
+if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
+  razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID,
+                                          RAZORPAY_KEY_SECRET))
+
+# Optional: simple access token protection for core AI endpoints
+ACCESS_TOKEN = os.getenv(
+    "TRANSLATOR_ACCESS_TOKEN")  # if not set, protection is disabled
+
+
+def verify_access_token(x_access_token: str = Header(None)):
+  """
+    If TRANSLATOR_ACCESS_TOKEN is set, require clients to send it as X-Access-Token.
+    If not set, this check does nothing (for easy local testing).
+    """
+  if ACCESS_TOKEN and x_access_token != ACCESS_TOKEN:
+    raise HTTPException(status_code=401, detail="Unauthorized")
+  return None
+
+
+# Simple in-memory payment log
+payments_log = []
 
 
 @app.get("/")
@@ -36,7 +66,26 @@ def ui():
   <meta charset="UTF-8" />
   <title>🌐 AI Voice Translator & Assistant</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
   <style>
+.paywall-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 20, 0.96);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.paywall-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 16px;
+  padding: 24px 28px;
+  max-width: 420px;
+  text-align: center;
+}
+
     :root {
       --bg-main: #0d1117;
       --bg-card: #161b22;
@@ -236,7 +285,28 @@ def ui():
   </style>
 </head>
 <body>
-<div class="container">
+
+<!-- PAYWALL OVERLAY -->
+<div id="paywallOverlay" class="paywall-overlay">
+  <div class="paywall-card">
+    <h2>🔒 Unlock AI Voice Translator</h2>
+    <p style="color:#8b949e; font-size:14px;">
+      Pay ₹59 one-time to unlock full access to the AI Voice Translator & Assistant on this browser.
+    </p>
+    <button id="payBtn" style="padding:12px 20px;font-size:16px;background:#5b8efb;color:white;border:none;border-radius:8px;cursor:pointer;">
+      Pay ₹59
+    </button>
+  </div>
+</div>
+
+<!-- PAYMENT SUCCESS BANNER -->
+<div id="payment-success" style="display:none; margin-top:12px; text-align:center; width:100%; max-width:960px;">
+  <h3>✅ Payment successful!</h3>
+  <p>Your translator is now unlocked on this browser.</p>
+</div>
+
+<!-- MAIN APP WRAPPER (HIDDEN UNTIL PAID) -->
+<div id="appWrapper" class="container" style="display:none;">
   <h1>🌐 AI Voice Translator & Assistant</h1>
   <p class="subtitle">
     Speak or type once, listen in any language. Switch between Translator and Assistant modes.
@@ -379,27 +449,27 @@ def ui():
     <div id="originalText" class="text-box"></div>
 
     <h4>Result</h4>
-<div id="translatedText" class="text-box"></div>
-<div id="searchLink" class="hint" style="margin-top:6px;"></div>
+    <div id="translatedText" class="text-box"></div>
+    <div id="searchLink" class="hint" style="margin-top:6px;"></div>
 
-<div style="margin-top:8px;">
-  <button id="replayBtn" class="btn-ghost" disabled>🔊 Speak / Replay</button>
-  <button id="copyBtn" class="btn-ghost">📋 Copy</button>
-  <button id="saveBtn" class="btn-ghost">⭐ Save</button>
-  <button id="shareBtn" class="btn-ghost">📤 Share</button>
-  <button id="stopVoiceBtn" class="btn-red">⏹ Stop Voice</button>
-</div>
+    <div style="margin-top:8px;">
+      <button id="replayBtn" class="btn-ghost" disabled>🔊 Speak / Replay</button>
+      <button id="copyBtn" class="btn-ghost">📋 Copy</button>
+      <button id="saveBtn" class="btn-ghost">⭐ Save</button>
+      <button id="shareBtn" class="btn-ghost">📤 Share</button>
+      <button id="stopVoiceBtn" class="btn-red">⏹ Stop Voice</button>
+    </div>
 
-<div class="section">
-  <h3>History & Favorites</h3>
-  <div style="margin-bottom:6px;">
-    <button id="clearHistoryBtn" class="btn-ghost">🧹 Clear history</button>
-    <button id="clearFavBtn" class="btn-ghost">🧹 Clear favorites</button>
+    <div class="section">
+      <h3>History & Favorites</h3>
+      <div style="margin-bottom:6px;">
+        <button id="clearHistoryBtn" class="btn-ghost">🧹 Clear history</button>
+        <button id="clearFavBtn" class="btn-ghost">🧹 Clear favorites</button>
+      </div>
+      <div class="hint"><b>Recent:</b> <span id="historyList">(empty)</span></div>
+      <div class="hint" style="margin-top:4px;"><b>Favorites:</b> <span id="favList">(empty)</span></div>
+    </div>
   </div>
-  <div class="hint"><b>Recent:</b> <span id="historyList">(empty)</span></div>
-  <div class="hint" style="margin-top:4px;"><b>Favorites:</b> <span id="favList">(empty)</span></div>
-</div>
-
 
   <!-- VOICE CONTROLS -->
   <div class="section">
@@ -418,8 +488,41 @@ def ui():
   <p id="status">Ready.</p>
 </div>
 
+<!-- Unlock logic on page load -->
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const overlay = document.getElementById("paywallOverlay");
+  const successBox = document.getElementById("payment-success");
+  const app = document.getElementById("appWrapper");
+
+  function showPaidUI() {
+    if (overlay) overlay.style.display = "none";
+    if (successBox) successBox.style.display = "block";
+    if (app) app.style.display = "block";
+  }
+
+  function showPaywall() {
+    if (overlay) overlay.style.display = "flex";
+    if (successBox) successBox.style.display = "none";
+    if (app) app.style.display = "none";
+  }
+
+  // Expose for use after payment
+  window._translatorShowPaidUI = showPaidUI;
+
+  if (localStorage.getItem("translator_paid") === "yes") {
+    showPaidUI();
+  } else {
+    showPaywall();
+  }
+});
+</script>
+
 <script>
 const BACKEND_BASE = window.location.origin;
+// Optional: if you set TRANSLATOR_ACCESS_TOKEN in backend,
+// put the same value here so the UI can call protected endpoints.
+const API_ACCESS_TOKEN = "CHANGE_ME_ACCESS_TOKEN";
 
 // Many languages with names + TTS codes
 const LANGUAGES = {
@@ -555,7 +658,6 @@ function addToFavorites(original, output, mode, targetKey) {
 renderHistory();
 renderFavorites();
 
-
 // Mode switching
 modeTabs.forEach(tab => {
   tab.addEventListener("click", () => {
@@ -652,7 +754,6 @@ clearFavBtn.addEventListener("click", () => {
   statusEl.textContent = "Favorites cleared.";
 });
 
-
 // Recording
 async function startRecording() {
   try {
@@ -668,6 +769,7 @@ async function startRecording() {
       try {
         const res = await fetch(`${BACKEND_BASE}/speech-to-text`, {
           method: "POST",
+          headers: { "X-Access-Token": API_ACCESS_TOKEN },
           body: fd
         });
         const data = await res.json();
@@ -743,7 +845,10 @@ async function processText(text) {
       statusEl.textContent = "Translating…";
       const res = await fetch(`${BACKEND_BASE}/translate-text`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Access-Token": API_ACCESS_TOKEN
+        },
         body: JSON.stringify({
           text,
           target_language: targetInfo.name,
@@ -767,7 +872,10 @@ async function processText(text) {
       statusEl.textContent = "Asking assistant…";
       const res = await fetch(`${BACKEND_BASE}/ask-assistant`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Access-Token": API_ACCESS_TOKEN
+        },
         body: JSON.stringify({
           question: text,
           target_language: targetInfo.name
@@ -792,6 +900,73 @@ async function processText(text) {
   }
 }
 </script>
+
+<!-- Razorpay payment flow -->
+<script>
+const payBtn = document.getElementById("payBtn");
+
+if (payBtn) {
+  payBtn.addEventListener("click", async () => {
+    try {
+      // 1) Create order
+      const res = await fetch(`${BACKEND_BASE}/create-order`, {
+        method: "POST"
+      });
+      const order = await res.json();
+
+      if (order.error || order.detail) {
+        alert("Error creating order: " + (order.error || order.detail));
+        return;
+      }
+
+      // 2) Configure Razorpay Checkout
+      const options = {
+        key: order.key_id,
+        amount: order.amount,
+        currency: order.currency || "INR",
+        name: "AI Voice Translator",
+        description: "Unlock Full Access",
+        order_id: order.order_id,
+        handler: async function (response) {
+          try {
+            // 3) Verify with backend
+            const verifyRes = await fetch(`${BACKEND_BASE}/verify-payment`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(response)
+            });
+            const verify = await verifyRes.json();
+
+            if (verify.success) {
+              localStorage.setItem("translator_paid", "yes");
+              if (window._translatorShowPaidUI) {
+                window._translatorShowPaidUI();
+              }
+              alert("Payment Successful! 🎉 Full access unlocked.");
+              // If you want redirect instead:
+              // window.location.href = "/success";
+            } else {
+              alert("Payment verification failed. Please try again.");
+            }
+          } catch (e) {
+            alert("Error verifying payment: " + e.message);
+          }
+        },
+        theme: { color: "#5b8efb" }
+      };
+
+      const rzp = new Razorpay(options);
+      rzp.on("payment.failed", function () {
+        alert("Payment failed. Please try again.");
+      });
+      rzp.open();
+    } catch (e) {
+      alert("Something went wrong: " + e.message);
+    }
+  });
+}
+</script>
+
 </body>
 </html>
     """
@@ -799,7 +974,10 @@ async function processText(text) {
 
 # 1️⃣ Speech → Text using Groq Whisper
 @app.post("/speech-to-text")
-async def speech_to_text(file: UploadFile = File(...)):
+async def speech_to_text(
+    file: UploadFile = File(...),
+    _: None = Depends(verify_access_token),
+):
   try:
     audio_path = "audio_input.wav"
     with open(audio_path, "wb") as f:
@@ -817,7 +995,10 @@ async def speech_to_text(file: UploadFile = File(...)):
 
 # 2️⃣ Text → Translated text
 @app.post("/translate-text")
-async def translate_text(data: dict):
+async def translate_text(
+    data: dict,
+    _: None = Depends(verify_access_token),
+):
   text = data.get("text")
   target_language = data.get("target_language")
   source_language = data.get("source_language")
@@ -838,11 +1019,11 @@ async def translate_text(data: dict):
                 "role":
                 "system",
                 "content":
-                "You are a translation engine. Output only the translated text."
+                "You are a translation engine. Output only the translated text.",
             },
             {
                 "role": "user",
-                "content": prompt
+                "content": prompt,
             },
         ],
     )
@@ -854,8 +1035,15 @@ async def translate_text(data: dict):
 
     # Optional pronunciation
     if include_pronunciation and target_language.lower() in [
-        "chinese", "japanese", "korean", "arabic", "russian", "greek",
-        "hebrew", "thai", "hindi"
+        "chinese",
+        "japanese",
+        "korean",
+        "arabic",
+        "russian",
+        "greek",
+        "hebrew",
+        "thai",
+        "hindi",
     ]:
       pron_prompt = (
           "Provide the romanized pronunciation (Latin letters) for this text. "
@@ -865,11 +1053,11 @@ async def translate_text(data: dict):
           messages=[
               {
                   "role": "system",
-                  "content": "You provide romanized pronunciations."
+                  "content": "You provide romanized pronunciations.",
               },
               {
                   "role": "user",
-                  "content": pron_prompt
+                  "content": pron_prompt,
               },
           ],
       )
@@ -878,7 +1066,9 @@ async def translate_text(data: dict):
 
     # Optional language detection
     if source_language and source_language.lower() == "auto":
-      detect_prompt = "What language is this text written in? Reply with only the language name:\n" + text
+      detect_prompt = (
+          "What language is this text written in? Reply with only the language name:\n"
+          + text)
       detect_response = groq_client.chat.completions.create(
           model="llama-3.1-8b-instant",
           messages=[
@@ -886,11 +1076,11 @@ async def translate_text(data: dict):
                   "role":
                   "system",
                   "content":
-                  "You detect languages. Reply with only the language name."
+                  "You detect languages. Reply with only the language name.",
               },
               {
                   "role": "user",
-                  "content": detect_prompt
+                  "content": detect_prompt,
               },
           ],
       )
@@ -905,7 +1095,10 @@ async def translate_text(data: dict):
 
 # 3️⃣ Assistant: answer questions + optional translation + Google link
 @app.post("/ask-assistant")
-async def ask_assistant(data: dict):
+async def ask_assistant(
+    data: dict,
+    _: None = Depends(verify_access_token),
+):
   question = data.get("question")
   target_language = data.get("target_language", "English")
 
@@ -924,7 +1117,7 @@ async def ask_assistant(data: dict):
             },
             {
                 "role": "user",
-                "content": question
+                "content": question,
             },
         ],
     )
@@ -945,17 +1138,17 @@ async def ask_assistant(data: dict):
                   "role":
                   "system",
                   "content":
-                  "You are a translation engine. Output only the translated text."
+                  "You are a translation engine. Output only the translated text.",
               },
               {
                   "role": "user",
-                  "content": prompt
+                  "content": prompt,
               },
           ],
       )
       translated_content = translated_resp.choices[0].message.content
-      answer_translated = translated_content.strip(
-      ) if translated_content else answer_en
+      answer_translated = (translated_content.strip()
+                           if translated_content else answer_en)
     except Exception:
       answer_translated = answer_en
   else:
@@ -988,11 +1181,11 @@ async def fix_grammar(data: dict):
         messages=[
             {
                 "role": "system",
-                "content": "You are a grammar correction engine."
+                "content": "You are a grammar correction engine.",
             },
             {
                 "role": "user",
-                "content": prompt
+                "content": prompt,
             },
         ],
     )
@@ -1018,11 +1211,11 @@ async def summarize(data: dict):
         messages=[
             {
                 "role": "system",
-                "content": "You are a summarization engine."
+                "content": "You are a summarization engine.",
             },
             {
                 "role": "user",
-                "content": prompt
+                "content": prompt,
             },
         ],
     )
@@ -1038,11 +1231,11 @@ async def summarize(data: dict):
           messages=[
               {
                   "role": "system",
-                  "content": "You are a translation engine."
+                  "content": "You are a translation engine.",
               },
               {
                   "role": "user",
-                  "content": trans_prompt
+                  "content": trans_prompt,
               },
           ],
       )
@@ -1076,11 +1269,11 @@ Keep it concise."""
         messages=[
             {
                 "role": "system",
-                "content": "You are a dictionary."
+                "content": "You are a dictionary.",
             },
             {
                 "role": "user",
-                "content": prompt
+                "content": prompt,
             },
         ],
     )
@@ -1096,11 +1289,11 @@ Keep it concise."""
           messages=[
               {
                   "role": "system",
-                  "content": "You are a translation engine."
+                  "content": "You are a translation engine.",
               },
               {
                   "role": "user",
-                  "content": trans_prompt
+                  "content": trans_prompt,
               },
           ],
       )
@@ -1117,11 +1310,11 @@ Keep it concise."""
         messages=[
             {
                 "role": "system",
-                "content": "You provide phonetic pronunciations."
+                "content": "You provide phonetic pronunciations.",
             },
             {
                 "role": "user",
-                "content": pron_prompt
+                "content": pron_prompt,
             },
         ],
     )
@@ -1139,7 +1332,9 @@ async def detect_language(data: dict):
   if not text:
     return {"error": "text is required"}
 
-  prompt = "What language is this text written in? Reply with only the language name:\n" + text
+  prompt = (
+      "What language is this text written in? Reply with only the language name:\n"
+      + text)
 
   try:
     response = groq_client.chat.completions.create(
@@ -1147,11 +1342,11 @@ async def detect_language(data: dict):
         messages=[
             {
                 "role": "system",
-                "content": "You detect languages."
+                "content": "You detect languages.",
             },
             {
                 "role": "user",
-                "content": prompt
+                "content": prompt,
             },
         ],
     )
@@ -1160,3 +1355,94 @@ async def detect_language(data: dict):
     return {"detected_language": detected}
   except Exception as e:
     return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ✅ Create Razorpay order for Premium purchase (₹59)
+@app.post("/create-order")
+def create_order():
+  if razorpay_client is None:
+    raise HTTPException(status_code=500, detail="Razorpay not configured")
+
+  amount_rupees = 59  # change this price whenever you want
+  amount_paise = amount_rupees * 100  # Razorpay uses paise
+
+  try:
+    order = razorpay_client.order.create(
+        dict(
+            amount=amount_paise,
+            currency="INR",
+            payment_capture=1,  # auto capture
+            notes={"product": "AI Voice Translator Premium"},
+        ))
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=str(e))
+
+  return {
+      "order_id": order["id"],
+      "amount": order["amount"],
+      "currency": order["currency"],
+      "key_id": RAZORPAY_KEY_ID,
+  }
+
+
+# ✅ Verify Razorpay payment signature + log
+@app.post("/verify-payment")
+async def verify_payment(data: dict):
+  if razorpay_client is None:
+    raise HTTPException(status_code=500, detail="Razorpay not configured")
+
+  order_id = data.get("razorpay_order_id")
+  payment_id = data.get("razorpay_payment_id")
+  signature = data.get("razorpay_signature")
+
+  if not (order_id and payment_id and signature):
+    raise HTTPException(status_code=400, detail="Missing payment details")
+
+  try:
+    # Use Razorpay utility to verify HMAC signature
+    razorpay_client.utility.verify_payment_signature({
+        "razorpay_order_id":
+        order_id,
+        "razorpay_payment_id":
+        payment_id,
+        "razorpay_signature":
+        signature,
+    })
+  except razorpay.errors.SignatureVerificationError:
+    return {"success": False}
+
+  # ✅ Signature is valid → payment succeeded → log it
+  payments_log.append({
+      "order_id": order_id,
+      "payment_id": payment_id,
+      "amount": 59 * 100,
+      "currency": "INR",
+      "timestamp": datetime.utcnow().isoformat() + "Z",
+  })
+
+  return {"success": True}
+
+
+# Simple success page (optional redirect target)
+@app.get("/success", response_class=HTMLResponse)
+def payment_success_page():
+  return """
+    <html>
+      <head><title>Payment Successful</title></head>
+      <body style="font-family: sans-serif; background:#0d1117; color:white; display:flex; justify-content:center; align-items:center; min-height:100vh;">
+        <div style="background:#161b22; padding:24px 28px; border-radius:16px; border:1px solid #30363d; max-width:420px; text-align:center;">
+          <h2>✅ Payment successful</h2>
+          <p>Your AI Voice Translator is now unlocked on this browser.</p>
+          <a href="/ui" style="display:inline-block; margin-top:16px; padding:10px 18px; background:#1f6feb; color:white; border-radius:8px; text-decoration:none;">Go to App</a>
+        </div>
+      </body>
+    </html>
+    """
+
+
+# Admin endpoint to view payment logs
+@app.get("/admin/payments")
+def get_payments(admin_key: str = Query(...)):
+  if admin_key != os.getenv("ADMIN_KEY"):
+    raise HTTPException(status_code=401, detail="Not allowed")
+  return payments_log
