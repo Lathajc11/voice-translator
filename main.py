@@ -5,8 +5,6 @@ from groq import Groq
 import os
 import urllib.parse
 import razorpay
-import hmac
-import hashlib
 from datetime import datetime
 
 app = FastAPI()
@@ -49,14 +47,588 @@ def verify_access_token(x_access_token: str = Header(None)):
 payments_log = []
 
 
-@app.get("/")
-def root():
-  return {
-      "status": "ok",
-      "message": "Voice translator backend is running (Groq-powered)",
-  }
+  # Simple JSON health-check (optional, for you)
+@app.get("/status")
+def status():
+      return {
+          "status": "ok",
+          "message": "Voice translator backend is running (Groq-powered)",
+      }
 
 
+  # Public landing page
+@app.get("/", response_class=HTMLResponse)
+def landing_page():
+      return """
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AI Voice Translator & Assistant – Pay ₹59, Use Forever</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        --bg-main: #020617;
+        --bg-card: #020617;
+        --bg-soft: #020617;
+        --accent-blue: #2563eb;
+        --accent-blue-soft: #1d4ed8;
+        --accent-green: #22c55e;
+        --accent-yellow: #facc15;
+        --text-main: #e5e7eb;
+        --text-muted: #9ca3af;
+        --border-subtle: #1f2937;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top, #0f172a 0, #020617 50%, #000 100%);
+        color: var(--text-main);
+        min-height: 100vh;
+      }
+      a { color: inherit; text-decoration: none; }
+
+      .page {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 24px 16px 40px;
+      }
+
+      .nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 28px;
+      }
+      .nav-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+      }
+      .nav-logo {
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
+        background: radial-gradient(circle at 30% 20%, #4ade80 0, #22c55e 25%, #2563eb 60%, #0f172a 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+      }
+      .badge-live {
+        font-size: 11px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(34,197,94,0.4);
+        color: #bbf7d0;
+        background: rgba(21,128,61,0.2);
+      }
+
+      .nav-right {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        font-size: 13px;
+      }
+      .nav-link {
+        color: var(--text-muted);
+        cursor: pointer;
+      }
+      .nav-link:hover {
+        color: var(--text-main);
+      }
+      .nav-cta {
+        padding: 7px 14px;
+        border-radius: 999px;
+        background: var(--accent-blue);
+        border: none;
+        color: white;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .nav-cta:hover {
+        background: var(--accent-blue-soft);
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+        gap: 26px;
+        align-items: center;
+        margin-bottom: 40px;
+      }
+      @media (max-width: 800px) {
+        .hero {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      .hero-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(15,23,42,0.9);
+        border: 1px solid var(--border-subtle);
+        margin-bottom: 10px;
+      }
+      .hero-kicker span {
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(37,99,235,0.2);
+        color: #bfdbfe;
+      }
+
+      .hero-title {
+        font-size: 28px;
+        line-height: 1.15;
+        margin-bottom: 12px;
+      }
+      .hero-title span {
+        color: #60a5fa;
+      }
+      .hero-sub {
+        font-size: 13px;
+        color: var(--text-muted);
+        line-height: 1.6;
+        margin-bottom: 16px;
+      }
+
+      .hero-benefits {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        font-size: 11px;
+        margin-bottom: 18px;
+      }
+      .chip {
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(148,163,184,0.5);
+        color: #e5e7eb;
+        background: rgba(15,23,42,0.8);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .chip-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: #22c55e;
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .btn-primary {
+        padding: 9px 18px;
+        border-radius: 999px;
+        border: none;
+        background: linear-gradient(135deg,#2563eb,#4f46e5);
+        color: white;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .btn-primary:hover {
+        filter: brightness(1.08);
+      }
+      .btn-ghost {
+        padding: 8px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--border-subtle);
+        background: rgba(15,23,42,0.85);
+        color: var(--text-main);
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .btn-ghost:hover {
+        border-color: var(--accent-blue);
+      }
+
+      .hero-note {
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+
+      .hero-right {
+        border-radius: 18px;
+        background: radial-gradient(circle at top left,#1d4ed8 0,#020617 55%,#000 100%);
+        border: 1px solid rgba(31,41,55,0.9);
+        padding: 16px 16px 18px;
+        box-shadow: 0 18px 45px rgba(15,23,42,0.85);
+      }
+      .hero-right-title {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .hero-right-sub {
+        font-size: 11px;
+        color: #cbd5f5;
+        margin-bottom: 10px;
+      }
+      .mini-card {
+        background: rgba(15,23,42,0.95);
+        border-radius: 12px;
+        border: 1px solid rgba(30,64,175,0.6);
+        padding: 10px 12px;
+        font-size: 11px;
+        margin-bottom: 10px;
+      }
+      .mini-label {
+        font-size: 10px;
+        color: #9ca3af;
+        margin-bottom: 2px;
+      }
+      .mini-value {
+        font-size: 12px;
+      }
+      .mini-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 6px;
+      }
+
+      .secure-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 10px;
+        color: #9ca3af;
+        margin-top: 8px;
+      }
+      .secure-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: #22c55e;
+      }
+
+      .section {
+        margin-top: 30px;
+        border-top: 1px solid rgba(31,41,55,0.9);
+        padding-top: 22px;
+      }
+      .section-title {
+        font-size: 15px;
+        margin-bottom: 10px;
+      }
+      .section-sub {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-bottom: 16px;
+      }
+
+      .features-grid {
+        display: grid;
+        grid-template-columns: repeat(3,minmax(0,1fr));
+        gap: 16px;
+      }
+      @media (max-width: 900px) {
+        .features-grid {
+          grid-template-columns: minmax(0,1fr);
+        }
+      }
+      .feature-card {
+        background: rgba(15,23,42,0.9);
+        border-radius: 14px;
+        border: 1px solid var(--border-subtle);
+        padding: 12px 12px 14px;
+        font-size: 12px;
+      }
+      .feature-title {
+        font-size: 13px;
+        margin-bottom: 4px;
+      }
+      .feature-pill {
+        display: inline-block;
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(148,163,184,0.5);
+        margin-bottom: 4px;
+        color: #e5e7eb;
+      }
+
+      .pricing {
+        display: grid;
+        grid-template-columns: minmax(0,1.2fr) minmax(0,1fr);
+        gap: 18px;
+        align-items: flex-start;
+      }
+      @media (max-width: 900px) {
+        .pricing { grid-template-columns: minmax(0,1fr); }
+      }
+      .pricing-card {
+        background: rgba(15,23,42,0.98);
+        border-radius: 16px;
+        border: 1px solid rgba(55,65,81,0.9);
+        padding: 14px 14px 16px;
+      }
+      .price-main {
+        font-size: 26px;
+        font-weight: 600;
+      }
+      .price-tag {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 2px;
+        margin-bottom: 8px;
+      }
+      .price-list {
+        list-style: none;
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 6px;
+      }
+      .price-list li { margin-bottom: 4px; }
+
+      .faq-list {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .faq-item {
+        margin-bottom: 8px;
+      }
+      .faq-q {
+        color: var(--text-main);
+        font-weight: 500;
+        margin-bottom: 2px;
+      }
+
+      .footer {
+        margin-top: 26px;
+        font-size: 11px;
+        color: var(--text-muted);
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 6px;
+        border-top: 1px solid rgba(31,41,55,0.9);
+        padding-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <!-- NAV -->
+      <header class="nav">
+        <div class="nav-left">
+          <div class="nav-logo">🌐</div>
+          <div>
+            <div>AI Voice Translator</div>
+            <div style="font-size:11px; color:#9ca3af;">Groq-powered · Razorpay secure</div>
+          </div>
+        </div>
+        <div class="nav-right">
+          <div class="badge-live">LIVE · accepting payments</div>
+          <button class="nav-cta" onclick="window.location.href='/ui'">Open Translator</button>
+        </div>
+      </header>
+
+      <!-- HERO -->
+      <section class="hero">
+        <div>
+          <div class="hero-kicker">
+            <span>New</span>
+            <div>Speak once. Translate & listen in any language.</div>
+          </div>
+          <h1 class="hero-title">
+            Your personal <span>AI voice translator</span><br/>
+            for <span>₹59 one-time</span>.
+          </h1>
+          <p class="hero-sub">
+            Record or type anything in your language and instantly hear it in English, Japanese,
+            Hindi, Kannada and dozens more. Runs in the browser, no app install, no complicated setup.
+          </p>
+
+          <div class="hero-benefits">
+            <div class="chip"><div class="chip-dot"></div> One-time payment · lifetime unlock on this browser</div>
+            <div class="chip">🎙 Voice input + spoken output</div>
+            <div class="chip">🤝 Perfect for students, travellers & online calls</div>
+          </div>
+
+          <div class="hero-actions">
+            <button class="btn-primary" onclick="window.location.href='/ui'">Start translating now</button>
+            <button class="btn-ghost" onclick="document.getElementById('pricing').scrollIntoView({behavior:'smooth'});">
+              View pricing & FAQs
+            </button>
+          </div>
+          <div class="hero-note">
+            ✅ Payments handled securely by Razorpay. You can test with UPI, card or wallet.<br/>
+            ✅ If payment succeeds once, the translator stays unlocked on this browser.
+          </div>
+        </div>
+
+        <div class="hero-right">
+          <div class="hero-right-title">Live preview</div>
+          <div class="hero-right-sub">
+            Type in English and hear it in Japanese, or speak in Kannada and see English text. All in one screen.
+          </div>
+
+          <div class="mini-card">
+            <div class="mini-label">Input</div>
+            <div class="mini-value">“Hello, hi, how are you?”</div>
+            <div class="mini-row">
+              <div>
+                <div class="mini-label">Source</div>
+                <div class="mini-value">English · Auto detect</div>
+              </div>
+              <div>
+                <div class="mini-label">Target</div>
+                <div class="mini-value">Japanese 🇯🇵</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mini-card">
+            <div class="mini-label">Output (spoken + text)</div>
+            <div class="mini-value">こんにちは、ハロー、どうですか？</div>
+            <div class="mini-row">
+              <div>
+                <div class="mini-label">Mode</div>
+                <div class="mini-value">Translator</div>
+              </div>
+              <div>
+                <div class="mini-label">Engine</div>
+                <div class="mini-value">Groq LLM + Whisper</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="secure-row">
+            <div class="secure-dot"></div>
+            <div>Secure checkout with Razorpay · We never see your card / UPI PIN.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FEATURES -->
+      <section class="section">
+        <h2 class="section-title">What you get when you unlock</h2>
+        <p class="section-sub">
+          All features are included with the one-time payment. No hidden limits, no subscriptions.
+        </p>
+        <div class="features-grid">
+          <div class="feature-card">
+            <div class="feature-pill">🎙 Voice in · Voice out</div>
+            <div class="feature-title">Speak naturally, hear the translation</div>
+            <p>
+              Use your microphone to speak once. The app converts speech to text, translates it,
+              and then speaks it aloud in the target language using browser voice.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-pill">🌐 40+ languages</div>
+            <div class="feature-title">From English, Hindi & Kannada to Japanese</div>
+            <p>
+              Translate between English, Hindi, Japanese, Kannada and many more languages.
+              Great for study, travel, anime, K-dramas, or talking to international friends.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-pill">🤖 Assistant mode</div>
+            <div class="feature-title">Ask questions like ChatGPT, but translated</div>
+            <p>
+              Switch to Assistant mode to ask questions (“Explain gravity”, “What is AI?”) and
+              automatically get the answer translated to your chosen language.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-pill">🧠 Groq + Whisper</div>
+            <div class="feature-title">Fast, accurate AI under the hood</div>
+            <p>
+              Powered by Groq’s Llama-3 models and Whisper for transcription. You get
+              fast responses with high-quality translations and summaries.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-pill">⭐ History & favorites</div>
+            <div class="feature-title">Save useful phrases</div>
+            <p>
+              Mark important translations as favorites and quickly revisit them later
+              for conversations, exams, or repeated travel phrases.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-pill">🛡️ No login required</div>
+            <div class="feature-title">Runs in your browser</div>
+            <p>
+              Everything works inside your browser. No account creation needed.
+              Once payment succeeds, the translator stays unlocked on that browser.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- PRICING + FAQ -->
+      <section class="section" id="pricing">
+        <div class="pricing">
+          <div class="pricing-card">
+            <h2 class="section-title">Simple pricing</h2>
+            <p class="section-sub">
+              One small payment, then use the AI voice translator as much as you want
+              on this browser.
+            </p>
+            <div class="price-main">₹59</div>
+            <div class="price-tag">One-time payment · Lifetime unlock on this browser</div>
+
+            <button class="btn-primary" style="margin-top:8px;" onclick="window.location.href='/ui'">
+              Pay ₹59 & unlock now
+            </button>
+
+            <ul class="price-list">
+              <li>✔ Unlimited translations & assistant questions</li>
+              <li>✔ All supported languages + voice features</li>
+              <li>✔ Secure Razorpay checkout (UPI / card / wallet)</li>
+              <li>✔ No subscription, no monthly charges</li>
+            </ul>
+          </div>
+
+          <div>
+            <h3 class="section-title" style="margin-bottom:6px;">FAQ</h3>
+            <div class="faq-list">
+              <div class="faq-item">
+                <div class="faq-q">Will I get my money directly to my bank?</div>
+                <div>Yes. Payments you receive go to the bank account linked to your Razorpay KYC, as per their settlement cycle.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-q">What if I close the tab or restart my laptop?</div>
+                <div>Once payment is successful, the app saves the unlock status in your browser. When you reopen the site, the translator stays unlocked on that browser.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-q">Can I use it on mobile?</div>
+                <div>Yes. The translator works in modern mobile browsers. You’ll need to pay once per device/browser to unlock premium features there.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-q">Is my card / UPI data safe?</div>
+                <div>All payments are processed by Razorpay. Your card, UPI PIN, and passwords never touch our servers.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <div>© 2025 AI Voice Translator. All rights reserved.</div>
+        <div>Built in India · Powered by Groq · Payments by Razorpay</div>
+      </footer>
+    </div>
+  </body>
+  </html>
+
+
+      """
 @app.get("/ui", response_class=HTMLResponse)
 def ui():
   return """
@@ -1368,7 +1940,7 @@ def create_order():
 
   try:
     order = razorpay_client.order.create(
-        dict(
+  dict(
             amount=amount_paise,
             currency="INR",
             payment_capture=1,  # auto capture
