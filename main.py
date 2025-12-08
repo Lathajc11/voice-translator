@@ -1,12 +1,9 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Depends, Query
+from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from groq import Groq
 import os
 import urllib.parse
-import razorpay
-from datetime import datetime, timezone
-from razorpay.errors import SignatureVerificationError
 
 app = FastAPI()
 
@@ -21,615 +18,13 @@ app.add_middleware(
 # Groq client (uses your GROQ_API_KEY from Secrets)
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
-RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 
-razorpay_client = None
-if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
-  razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID,
-                                          RAZORPAY_KEY_SECRET))
-
-# Optional: simple access token protection for core AI endpoints
-ACCESS_TOKEN = os.getenv(
-    "TRANSLATOR_ACCESS_TOKEN")  # if not set, protection is disabled
-
-
-def verify_access_token(x_access_token: str = Header(None)):
-  """
-    If TRANSLATOR_ACCESS_TOKEN is set, require clients to send it as X-Access-Token.
-    If not set, this check does nothing (for easy local testing).
-    """
-  if ACCESS_TOKEN and x_access_token != ACCESS_TOKEN:
-    raise HTTPException(status_code=401, detail="Unauthorized")
-  return None
-
-
-# Simple in-memory payment log
-payments_log = []
-
-
-# Simple JSON health-check (optional, for you)
-@app.get("/status")
-def status():
+@app.get("/")
+def root():
   return {
       "status": "ok",
       "message": "Voice translator backend is running (Groq-powered)",
   }
-
-
-# Public landing page
-@app.get("/", response_class=HTMLResponse)
-def landing_page():
-  return """
-  <!DOCTYPE html>
-  <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>AI Voice Translator & Assistant – Pay ₹59, Use Forever</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <style>
-      :root {
-        --bg-main: #020617;
-        --bg-card: #020617;
-        --bg-soft: #020617;
-        --accent-blue: #2563eb;
-        --accent-blue-soft: #1d4ed8;
-        --accent-green: #22c55e;
-        --accent-yellow: #facc15;
-        --text-main: #e5e7eb;
-        --text-muted: #9ca3af;
-        --border-subtle: #1f2937;
-      }
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body {
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: radial-gradient(circle at top, #0f172a 0, #020617 50%, #000 100%);
-        color: var(--text-main);
-        min-height: 100vh;
-      }
-      a { color: inherit; text-decoration: none; }
-
-      .page {
-        max-width: 1040px;
-        margin: 0 auto;
-        padding: 24px 16px 40px;
-      }
-
-      .nav {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 28px;
-      }
-      .nav-left {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        font-weight: 600;
-        letter-spacing: 0.03em;
-      }
-      .nav-logo {
-        width: 32px;
-        height: 32px;
-        border-radius: 999px;
-        background: radial-gradient(circle at 30% 20%, #4ade80 0, #22c55e 25%, #2563eb 60%, #0f172a 100%);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 18px;
-      }
-      .badge-live {
-        font-size: 11px;
-        padding: 3px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(34,197,94,0.4);
-        color: #bbf7d0;
-        background: rgba(21,128,61,0.2);
-      }
-
-      .nav-right {
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        font-size: 13px;
-      }
-      .nav-link {
-        color: var(--text-muted);
-        cursor: pointer;
-      }
-      .nav-link:hover {
-        color: var(--text-main);
-      }
-      .nav-cta {
-        padding: 7px 14px;
-        border-radius: 999px;
-        background: var(--accent-blue);
-        border: none;
-        color: white;
-        font-size: 13px;
-        cursor: pointer;
-      }
-      .nav-cta:hover {
-        background: var(--accent-blue-soft);
-      }
-
-      .hero {
-        display: grid;
-        grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-        gap: 26px;
-        align-items: center;
-        margin-bottom: 40px;
-      }
-      @media (max-width: 800px) {
-        .hero {
-          grid-template-columns: minmax(0, 1fr);
-        }
-      }
-
-      .hero-kicker {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 11px;
-        padding: 4px 10px;
-        border-radius: 999px;
-        background: rgba(15,23,42,0.9);
-        border: 1px solid var(--border-subtle);
-        margin-bottom: 10px;
-      }
-      .hero-kicker span {
-        font-size: 10px;
-        padding: 2px 8px;
-        border-radius: 999px;
-        background: rgba(37,99,235,0.2);
-        color: #bfdbfe;
-      }
-
-      .hero-title {
-        font-size: 28px;
-        line-height: 1.15;
-        margin-bottom: 12px;
-      }
-      .hero-title span {
-        color: #60a5fa;
-      }
-      .hero-sub {
-        font-size: 13px;
-        color: var(--text-muted);
-        line-height: 1.6;
-        margin-bottom: 16px;
-      }
-
-      .hero-benefits {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        font-size: 11px;
-        margin-bottom: 18px;
-      }
-      .chip {
-        padding: 4px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(148,163,184,0.5);
-        color: #e5e7eb;
-        background: rgba(15,23,42,0.8);
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .chip-dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 999px;
-        background: #22c55e;
-      }
-
-      .hero-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-bottom: 10px;
-      }
-      .btn-primary {
-        padding: 9px 18px;
-        border-radius: 999px;
-        border: none;
-        background: linear-gradient(135deg,#2563eb,#4f46e5);
-        color: white;
-        font-size: 13px;
-        cursor: pointer;
-      }
-      .btn-primary:hover {
-        filter: brightness(1.08);
-      }
-      .btn-ghost {
-        padding: 8px 14px;
-        border-radius: 999px;
-        border: 1px solid var(--border-subtle);
-        background: rgba(15,23,42,0.85);
-        color: var(--text-main);
-        font-size: 13px;
-        cursor: pointer;
-      }
-      .btn-ghost:hover {
-        border-color: var(--accent-blue);
-      }
-
-      .hero-note {
-        font-size: 11px;
-        color: var(--text-muted);
-      }
-
-      .hero-right {
-        border-radius: 18px;
-        background: radial-gradient(circle at top left,#1d4ed8 0,#020617 55%,#000 100%);
-        border: 1px solid rgba(31,41,55,0.9);
-        padding: 16px 16px 18px;
-        box-shadow: 0 18px 45px rgba(15,23,42,0.85);
-      }
-      .hero-right-title {
-        font-size: 13px;
-        font-weight: 600;
-        margin-bottom: 6px;
-      }
-      .hero-right-sub {
-        font-size: 11px;
-        color: #cbd5f5;
-        margin-bottom: 10px;
-      }
-      .mini-card {
-        background: rgba(15,23,42,0.95);
-        border-radius: 12px;
-        border: 1px solid rgba(30,64,175,0.6);
-        padding: 10px 12px;
-        font-size: 11px;
-        margin-bottom: 10px;
-      }
-      .mini-label {
-        font-size: 10px;
-        color: #9ca3af;
-        margin-bottom: 2px;
-      }
-      .mini-value {
-        font-size: 12px;
-      }
-      .mini-row {
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
-        margin-top: 6px;
-      }
-
-      .secure-row {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 10px;
-        color: #9ca3af;
-        margin-top: 8px;
-      }
-      .secure-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 999px;
-        background: #22c55e;
-      }
-
-      .section {
-        margin-top: 30px;
-        border-top: 1px solid rgba(31,41,55,0.9);
-        padding-top: 22px;
-      }
-      .section-title {
-        font-size: 15px;
-        margin-bottom: 10px;
-      }
-      .section-sub {
-        font-size: 12px;
-        color: var(--text-muted);
-        margin-bottom: 16px;
-      }
-
-      .features-grid {
-        display: grid;
-        grid-template-columns: repeat(3,minmax(0,1fr));
-        gap: 16px;
-      }
-      @media (max-width: 900px) {
-        .features-grid {
-          grid-template-columns: minmax(0,1fr);
-        }
-      }
-      .feature-card {
-        background: rgba(15,23,42,0.9);
-        border-radius: 14px;
-        border: 1px solid var(--border-subtle);
-        padding: 12px 12px 14px;
-        font-size: 12px;
-      }
-      .feature-title {
-        font-size: 13px;
-        margin-bottom: 4px;
-      }
-      .feature-pill {
-        display: inline-block;
-        font-size: 10px;
-        padding: 2px 8px;
-        border-radius: 999px;
-        border: 1px solid rgba(148,163,184,0.5);
-        margin-bottom: 4px;
-        color: #e5e7eb;
-      }
-
-      .pricing {
-        display: grid;
-        grid-template-columns: minmax(0,1.2fr) minmax(0,1fr);
-        gap: 18px;
-        align-items: flex-start;
-      }
-      @media (max-width: 900px) {
-        .pricing { grid-template-columns: minmax(0,1fr); }
-      }
-      .pricing-card {
-        background: rgba(15,23,42,0.98);
-        border-radius: 16px;
-        border: 1px solid rgba(55,65,81,0.9);
-        padding: 14px 14px 16px;
-      }
-      .price-main {
-        font-size: 26px;
-        font-weight: 600;
-      }
-      .price-tag {
-        font-size: 11px;
-        color: var(--text-muted);
-        margin-top: 2px;
-        margin-bottom: 8px;
-      }
-      .price-list {
-        list-style: none;
-        font-size: 12px;
-        color: var(--text-muted);
-        margin-top: 6px;
-      }
-      .price-list li { margin-bottom: 4px; }
-
-      .faq-list {
-        font-size: 12px;
-        color: var(--text-muted);
-      }
-      .faq-item {
-        margin-bottom: 8px;
-      }
-      .faq-q {
-        color: var(--text-main);
-        font-weight: 500;
-        margin-bottom: 2px;
-      }
-
-      .footer {
-        margin-top: 26px;
-        font-size: 11px;
-        color: var(--text-muted);
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        gap: 6px;
-        border-top: 1px solid rgba(31,41,55,0.9);
-        padding-top: 10px;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="page">
-      <!-- NAV -->
-      <header class="nav">
-        <div class="nav-left">
-          <div class="nav-logo">🌐</div>
-          <div>
-            <div>AI Voice Translator</div>
-            <div style="font-size:11px; color:#9ca3af;">Groq-powered · Razorpay secure</div>
-          </div>
-        </div>
-        <div class="nav-right">
-          <div class="badge-live">LIVE · accepting payments</div>
-          <button class="nav-cta" onclick="window.location.href='/ui'">Open Translator</button>
-        </div>
-      </header>
-
-      <!-- HERO -->
-      <section class="hero">
-        <div>
-          <div class="hero-kicker">
-            <span>New</span>
-            <div>Speak once. Translate & listen in any language.</div>
-          </div>
-          <h1 class="hero-title">
-            Your personal <span>AI voice translator</span><br/>
-            for <span>₹99 one-time</span>.
-          </h1>
-          <p class="hero-sub">
-            Record or type anything in your language and instantly hear it in English, Japanese,
-            Hindi, Kannada and dozens more. Runs in the browser, no app install, no complicated setup.
-          </p>
-
-          <div class="hero-benefits">
-            <div class="chip"><div class="chip-dot"></div> One-time payment · lifetime unlock on this browser</div>
-            <div class="chip">🎙 Voice input + spoken output</div>
-            <div class="chip">🤝 Perfect for students, travellers & online calls</div>
-          </div>
-
-          <div class="hero-actions">
-            <button class="btn-primary" onclick="window.location.href='/ui'">Start translating now</button>
-            <button class="btn-ghost" onclick="document.getElementById('pricing').scrollIntoView({behavior:'smooth'});">
-              View pricing & FAQs
-            </button>
-          </div>
-          <div class="hero-note">
-            ✅ Payments handled securely by Razorpay. You can test with UPI, card or wallet.<br/>
-            ✅ If payment succeeds once, the translator stays unlocked on this browser.
-          </div>
-        </div>
-
-        <div class="hero-right">
-          <div class="hero-right-title">Live preview</div>
-          <div class="hero-right-sub">
-            Type in English and hear it in Japanese, or speak in Kannada and see English text. All in one screen.
-          </div>
-
-          <div class="mini-card">
-            <div class="mini-label">Input</div>
-            <div class="mini-value">“Hello, hi, how are you?”</div>
-            <div class="mini-row">
-              <div>
-                <div class="mini-label">Source</div>
-                <div class="mini-value">English · Auto detect</div>
-              </div>
-              <div>
-                <div class="mini-label">Target</div>
-                <div class="mini-value">Japanese 🇯🇵</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="mini-card">
-            <div class="mini-label">Output (spoken + text)</div>
-            <div class="mini-value">こんにちは、ハロー、どうですか？</div>
-            <div class="mini-row">
-              <div>
-                <div class="mini-label">Mode</div>
-                <div class="mini-value">Translator</div>
-              </div>
-              <div>
-                <div class="mini-label">Engine</div>
-                <div class="mini-value">Groq LLM + Whisper</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="secure-row">
-            <div class="secure-dot"></div>
-            <div>Secure checkout with Razorpay · We never see your card / UPI PIN.</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- FEATURES -->
-      <section class="section">
-        <h2 class="section-title">What you get when you unlock</h2>
-        <p class="section-sub">
-          All features are included with the one-time payment. No hidden limits, no subscriptions.
-        </p>
-        <div class="features-grid">
-          <div class="feature-card">
-            <div class="feature-pill">🎙 Voice in · Voice out</div>
-            <div class="feature-title">Speak naturally, hear the translation</div>
-            <p>
-              Use your microphone to speak once. The app converts speech to text, translates it,
-              and then speaks it aloud in the target language using browser voice.
-            </p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-pill">🌐 40+ languages</div>
-            <div class="feature-title">From English, Hindi & Kannada to Japanese</div>
-            <p>
-              Translate between English, Hindi, Japanese, Kannada and many more languages.
-              Great for study, travel, anime, K-dramas, or talking to international friends.
-            </p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-pill">🤖 Assistant mode</div>
-            <div class="feature-title">Ask questions like ChatGPT, but translated</div>
-            <p>
-              Switch to Assistant mode to ask questions (“Explain gravity”, “What is AI?”) and
-              automatically get the answer translated to your chosen language.
-            </p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-pill">🧠 Groq + Whisper</div>
-            <div class="feature-title">Fast, accurate AI under the hood</div>
-            <p>
-              Powered by Groq’s Llama-3 models and Whisper for transcription. You get
-              fast responses with high-quality translations and summaries.
-            </p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-pill">⭐ History & favorites</div>
-            <div class="feature-title">Save useful phrases</div>
-            <p>
-              Mark important translations as favorites and quickly revisit them later
-              for conversations, exams, or repeated travel phrases.
-            </p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-pill">🛡️ No login required</div>
-            <div class="feature-title">Runs in your browser</div>
-            <p>
-              Everything works inside your browser. No account creation needed.
-              Once payment succeeds, the translator stays unlocked on that browser.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <!-- PRICING + FAQ -->
-      <section class="section" id="pricing">
-        <div class="pricing">
-          <div class="pricing-card">
-            <h2 class="section-title">Simple pricing</h2>
-            <p class="section-sub">
-              One small payment, then use the AI voice translator as much as you want
-              on this browser.
-            </p>
-            <div class="price-main">₹99</div>
-            <div class="price-tag">One-time payment · Lifetime unlock on this browser</div>
-
-            <button class="btn-primary" style="margin-top:8px;" onclick="window.location.href='/ui'">
-              Pay ₹99 & unlock now
-            </button>
-
-            <ul class="price-list">
-              <li>✔ Unlimited translations & assistant questions</li>
-              <li>✔ All supported languages + voice features</li>
-              <li>✔ Secure Razorpay checkout (UPI / card / wallet)</li>
-              <li>✔ No subscription, no monthly charges</li>
-            </ul>
-          </div>
-
-          <div>
-            <h3 class="section-title" style="margin-bottom:6px;">FAQ</h3>
-            <div class="faq-list">
-              <div class="faq-item">
-                <div class="faq-q">Will I get my money directly to my bank?</div>
-                <div>Yes. Payments you receive go to the bank account linked to your Razorpay KYC, as per their settlement cycle.</div>
-              </div>
-              <div class="faq-item">
-                <div class="faq-q">What if I close the tab or restart my laptop?</div>
-                <div>Once payment is successful, the app saves the unlock status in your browser. When you reopen the site, the translator stays unlocked on that browser.</div>
-              </div>
-              <div class="faq-item">
-                <div class="faq-q">Can I use it on mobile?</div>
-                <div>Yes. The translator works in modern mobile browsers. You’ll need to pay once per device/browser to unlock premium features there.</div>
-              </div>
-              <div class="faq-item">
-                <div class="faq-q">Is my card / UPI data safe?</div>
-                <div>All payments are processed by Razorpay. Your card, UPI PIN, and passwords never touch our servers.</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <footer class="footer">
-        <div>© 2025 AI Voice Translator. All rights reserved.</div>
-        <div>Built in India · Powered by Groq · Payments by Razorpay</div>
-      </footer>
-    </div>
-  </body>
-  </html>
-
-
-      """
 
 
 @app.get("/ui", response_class=HTMLResponse)
@@ -641,26 +36,7 @@ def ui():
   <meta charset="UTF-8" />
   <title>🌐 AI Voice Translator & Assistant</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
   <style>
-.paywall-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 10, 20, 0.96);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.paywall-card {
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 16px;
-  padding: 24px 28px;
-  max-width: 420px;
-  text-align: center;
-}
-
     :root {
       --bg-main: #0d1117;
       --bg-card: #161b22;
@@ -860,28 +236,7 @@ def ui():
   </style>
 </head>
 <body>
-
-<!-- PAYWALL OVERLAY -->
-<div id="paywallOverlay" class="paywall-overlay">
-  <div class="paywall-card">
-    <h2>🔒 Unlock AI Voice Translator</h2>
-    <p style="color:#8b949e; font-size:14px;">
-      Pay ₹99 one-time to unlock full access to the AI Voice Translator & Assistant on this browser.
-    </p>
-    <button id="payBtn" style="padding:12px 20px;font-size:16px;background:#5b8efb;color:white;border:none;border-radius:8px;cursor:pointer;">
-      Pay ₹99
-    </button>
-  </div>
-</div>
-
-<!-- PAYMENT SUCCESS BANNER -->
-<div id="payment-success" style="display:none; margin-top:12px; text-align:center; width:100%; max-width:960px;">
-  <h3>✅ Payment successful!</h3>
-  <p>Your translator is now unlocked on this browser.</p>
-</div>
-
-<!-- MAIN APP WRAPPER (HIDDEN UNTIL PAID) -->
-<div id="appWrapper" class="container" style="display:none;">
+<div class="container">
   <h1>🌐 AI Voice Translator & Assistant</h1>
   <p class="subtitle">
     Speak or type once, listen in any language. Switch between Translator and Assistant modes.
@@ -1024,27 +379,27 @@ def ui():
     <div id="originalText" class="text-box"></div>
 
     <h4>Result</h4>
-    <div id="translatedText" class="text-box"></div>
-    <div id="searchLink" class="hint" style="margin-top:6px;"></div>
+<div id="translatedText" class="text-box"></div>
+<div id="searchLink" class="hint" style="margin-top:6px;"></div>
 
-    <div style="margin-top:8px;">
-      <button id="replayBtn" class="btn-ghost" disabled>🔊 Speak / Replay</button>
-      <button id="copyBtn" class="btn-ghost">📋 Copy</button>
-      <button id="saveBtn" class="btn-ghost">⭐ Save</button>
-      <button id="shareBtn" class="btn-ghost">📤 Share</button>
-      <button id="stopVoiceBtn" class="btn-red">⏹ Stop Voice</button>
-    </div>
+<div style="margin-top:8px;">
+  <button id="replayBtn" class="btn-ghost" disabled>🔊 Speak / Replay</button>
+  <button id="copyBtn" class="btn-ghost">📋 Copy</button>
+  <button id="saveBtn" class="btn-ghost">⭐ Save</button>
+  <button id="shareBtn" class="btn-ghost">📤 Share</button>
+  <button id="stopVoiceBtn" class="btn-red">⏹ Stop Voice</button>
+</div>
 
-    <div class="section">
-      <h3>History & Favorites</h3>
-      <div style="margin-bottom:6px;">
-        <button id="clearHistoryBtn" class="btn-ghost">🧹 Clear history</button>
-        <button id="clearFavBtn" class="btn-ghost">🧹 Clear favorites</button>
-      </div>
-      <div class="hint"><b>Recent:</b> <span id="historyList">(empty)</span></div>
-      <div class="hint" style="margin-top:4px;"><b>Favorites:</b> <span id="favList">(empty)</span></div>
-    </div>
+<div class="section">
+  <h3>History & Favorites</h3>
+  <div style="margin-bottom:6px;">
+    <button id="clearHistoryBtn" class="btn-ghost">🧹 Clear history</button>
+    <button id="clearFavBtn" class="btn-ghost">🧹 Clear favorites</button>
   </div>
+  <div class="hint"><b>Recent:</b> <span id="historyList">(empty)</span></div>
+  <div class="hint" style="margin-top:4px;"><b>Favorites:</b> <span id="favList">(empty)</span></div>
+</div>
+
 
   <!-- VOICE CONTROLS -->
   <div class="section">
@@ -1063,41 +418,8 @@ def ui():
   <p id="status">Ready.</p>
 </div>
 
-<!-- Unlock logic on page load -->
-<script>
-document.addEventListener("DOMContentLoaded", () => {
-  const overlay = document.getElementById("paywallOverlay");
-  const successBox = document.getElementById("payment-success");
-  const app = document.getElementById("appWrapper");
-
-  function showPaidUI() {
-    if (overlay) overlay.style.display = "none";
-    if (successBox) successBox.style.display = "block";
-    if (app) app.style.display = "block";
-  }
-
-  function showPaywall() {
-    if (overlay) overlay.style.display = "flex";
-    if (successBox) successBox.style.display = "none";
-    if (app) app.style.display = "none";
-  }
-
-  // Expose for use after payment
-  window._translatorShowPaidUI = showPaidUI;
-
-  if (localStorage.getItem("translator_paid") === "yes") {
-    showPaidUI();
-  } else {
-    showPaywall();
-  }
-});
-</script>
-
 <script>
 const BACKEND_BASE = window.location.origin;
-// Optional: if you set TRANSLATOR_ACCESS_TOKEN in backend,
-// put the same value here so the UI can call protected endpoints.
-const API_ACCESS_TOKEN = "CHANGE_ME_ACCESS_TOKEN";
 
 // Many languages with names + TTS codes
 const LANGUAGES = {
@@ -1233,6 +555,7 @@ function addToFavorites(original, output, mode, targetKey) {
 renderHistory();
 renderFavorites();
 
+
 // Mode switching
 modeTabs.forEach(tab => {
   tab.addEventListener("click", () => {
@@ -1329,6 +652,7 @@ clearFavBtn.addEventListener("click", () => {
   statusEl.textContent = "Favorites cleared.";
 });
 
+
 // Recording
 async function startRecording() {
   try {
@@ -1344,7 +668,6 @@ async function startRecording() {
       try {
         const res = await fetch(`${BACKEND_BASE}/speech-to-text`, {
           method: "POST",
-          headers: { "X-Access-Token": API_ACCESS_TOKEN },
           body: fd
         });
         const data = await res.json();
@@ -1420,10 +743,7 @@ async function processText(text) {
       statusEl.textContent = "Translating…";
       const res = await fetch(`${BACKEND_BASE}/translate-text`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Access-Token": API_ACCESS_TOKEN
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text,
           target_language: targetInfo.name,
@@ -1447,10 +767,7 @@ async function processText(text) {
       statusEl.textContent = "Asking assistant…";
       const res = await fetch(`${BACKEND_BASE}/ask-assistant`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Access-Token": API_ACCESS_TOKEN
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question: text,
           target_language: targetInfo.name
@@ -1475,73 +792,6 @@ async function processText(text) {
   }
 }
 </script>
-
-<!-- Razorpay payment flow -->
-<script>
-const payBtn = document.getElementById("payBtn");
-
-if (payBtn) {
-  payBtn.addEventListener("click", async () => {
-    try {
-      // 1) Create order
-      const res = await fetch(`${BACKEND_BASE}/create-order`, {
-        method: "POST"
-      });
-      const order = await res.json();
-
-      if (order.error || order.detail) {
-        alert("Error creating order: " + (order.error || order.detail));
-        return;
-      }
-
-      // 2) Configure Razorpay Checkout
-      const options = {
-        key: order.key_id,
-        amount: order.amount,
-        currency: order.currency || "INR",
-        name: "AI Voice Translator",
-        description: "Unlock Full Access",
-        order_id: order.order_id,
-        handler: async function (response) {
-          try {
-            // 3) Verify with backend
-            const verifyRes = await fetch(`${BACKEND_BASE}/verify-payment`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(response)
-            });
-            const verify = await verifyRes.json();
-
-            if (verify.success) {
-              localStorage.setItem("translator_paid", "yes");
-              if (window._translatorShowPaidUI) {
-                window._translatorShowPaidUI();
-              }
-              alert("Payment Successful! 🎉 Full access unlocked.");
-              // If you want redirect instead:
-              // window.location.href = "/success";
-            } else {
-              alert("Payment verification failed. Please try again.");
-            }
-          } catch (e) {
-            alert("Error verifying payment: " + e.message);
-          }
-        },
-        theme: { color: "#5b8efb" }
-      };
-
-      const rzp = new Razorpay(options);
-      rzp.on("payment.failed", function () {
-        alert("Payment failed. Please try again.");
-      });
-      rzp.open();
-    } catch (e) {
-      alert("Something went wrong: " + e.message);
-    }
-  });
-}
-</script>
-
 </body>
 </html>
     """
@@ -1549,10 +799,7 @@ if (payBtn) {
 
 # 1️⃣ Speech → Text using Groq Whisper
 @app.post("/speech-to-text")
-async def speech_to_text(
-    file: UploadFile = File(...),
-    _: None = Depends(verify_access_token),
-):
+async def speech_to_text(file: UploadFile = File(...)):
   try:
     audio_path = "audio_input.wav"
     with open(audio_path, "wb") as f:
@@ -1570,10 +817,7 @@ async def speech_to_text(
 
 # 2️⃣ Text → Translated text
 @app.post("/translate-text")
-async def translate_text(
-    data: dict,
-    _: None = Depends(verify_access_token),
-):
+async def translate_text(data: dict):
   text = data.get("text")
   target_language = data.get("target_language")
   source_language = data.get("source_language")
@@ -1594,11 +838,11 @@ async def translate_text(
                 "role":
                 "system",
                 "content":
-                "You are a translation engine. Output only the translated text.",
+                "You are a translation engine. Output only the translated text."
             },
             {
                 "role": "user",
-                "content": prompt,
+                "content": prompt
             },
         ],
     )
@@ -1610,15 +854,8 @@ async def translate_text(
 
     # Optional pronunciation
     if include_pronunciation and target_language.lower() in [
-        "chinese",
-        "japanese",
-        "korean",
-        "arabic",
-        "russian",
-        "greek",
-        "hebrew",
-        "thai",
-        "hindi",
+        "chinese", "japanese", "korean", "arabic", "russian", "greek",
+        "hebrew", "thai", "hindi"
     ]:
       pron_prompt = (
           "Provide the romanized pronunciation (Latin letters) for this text. "
@@ -1628,11 +865,11 @@ async def translate_text(
           messages=[
               {
                   "role": "system",
-                  "content": "You provide romanized pronunciations.",
+                  "content": "You provide romanized pronunciations."
               },
               {
                   "role": "user",
-                  "content": pron_prompt,
+                  "content": pron_prompt
               },
           ],
       )
@@ -1641,9 +878,7 @@ async def translate_text(
 
     # Optional language detection
     if source_language and source_language.lower() == "auto":
-      detect_prompt = (
-          "What language is this text written in? Reply with only the language name:\n"
-          + text)
+      detect_prompt = "What language is this text written in? Reply with only the language name:\n" + text
       detect_response = groq_client.chat.completions.create(
           model="llama-3.1-8b-instant",
           messages=[
@@ -1651,11 +886,11 @@ async def translate_text(
                   "role":
                   "system",
                   "content":
-                  "You detect languages. Reply with only the language name.",
+                  "You detect languages. Reply with only the language name."
               },
               {
                   "role": "user",
-                  "content": detect_prompt,
+                  "content": detect_prompt
               },
           ],
       )
@@ -1670,10 +905,7 @@ async def translate_text(
 
 # 3️⃣ Assistant: answer questions + optional translation + Google link
 @app.post("/ask-assistant")
-async def ask_assistant(
-    data: dict,
-    _: None = Depends(verify_access_token),
-):
+async def ask_assistant(data: dict):
   question = data.get("question")
   target_language = data.get("target_language", "English")
 
@@ -1692,7 +924,7 @@ async def ask_assistant(
             },
             {
                 "role": "user",
-                "content": question,
+                "content": question
             },
         ],
     )
@@ -1713,17 +945,17 @@ async def ask_assistant(
                   "role":
                   "system",
                   "content":
-                  "You are a translation engine. Output only the translated text.",
+                  "You are a translation engine. Output only the translated text."
               },
               {
                   "role": "user",
-                  "content": prompt,
+                  "content": prompt
               },
           ],
       )
       translated_content = translated_resp.choices[0].message.content
-      answer_translated = (translated_content.strip()
-                           if translated_content else answer_en)
+      answer_translated = translated_content.strip(
+      ) if translated_content else answer_en
     except Exception:
       answer_translated = answer_en
   else:
@@ -1756,11 +988,11 @@ async def fix_grammar(data: dict):
         messages=[
             {
                 "role": "system",
-                "content": "You are a grammar correction engine.",
+                "content": "You are a grammar correction engine."
             },
             {
                 "role": "user",
-                "content": prompt,
+                "content": prompt
             },
         ],
     )
@@ -1786,11 +1018,11 @@ async def summarize(data: dict):
         messages=[
             {
                 "role": "system",
-                "content": "You are a summarization engine.",
+                "content": "You are a summarization engine."
             },
             {
                 "role": "user",
-                "content": prompt,
+                "content": prompt
             },
         ],
     )
@@ -1806,11 +1038,11 @@ async def summarize(data: dict):
           messages=[
               {
                   "role": "system",
-                  "content": "You are a translation engine.",
+                  "content": "You are a translation engine."
               },
               {
                   "role": "user",
-                  "content": trans_prompt,
+                  "content": trans_prompt
               },
           ],
       )
@@ -1844,11 +1076,11 @@ Keep it concise."""
         messages=[
             {
                 "role": "system",
-                "content": "You are a dictionary.",
+                "content": "You are a dictionary."
             },
             {
                 "role": "user",
-                "content": prompt,
+                "content": prompt
             },
         ],
     )
@@ -1864,11 +1096,11 @@ Keep it concise."""
           messages=[
               {
                   "role": "system",
-                  "content": "You are a translation engine.",
+                  "content": "You are a translation engine."
               },
               {
                   "role": "user",
-                  "content": trans_prompt,
+                  "content": trans_prompt
               },
           ],
       )
@@ -1885,11 +1117,11 @@ Keep it concise."""
         messages=[
             {
                 "role": "system",
-                "content": "You provide phonetic pronunciations.",
+                "content": "You provide phonetic pronunciations."
             },
             {
                 "role": "user",
-                "content": pron_prompt,
+                "content": pron_prompt
             },
         ],
     )
@@ -1907,9 +1139,7 @@ async def detect_language(data: dict):
   if not text:
     return {"error": "text is required"}
 
-  prompt = (
-      "What language is this text written in? Reply with only the language name:\n"
-      + text)
+  prompt = "What language is this text written in? Reply with only the language name:\n" + text
 
   try:
     response = groq_client.chat.completions.create(
@@ -1917,11 +1147,11 @@ async def detect_language(data: dict):
         messages=[
             {
                 "role": "system",
-                "content": "You detect languages.",
+                "content": "You detect languages."
             },
             {
                 "role": "user",
-                "content": prompt,
+                "content": prompt
             },
         ],
     )
@@ -1930,94 +1160,3 @@ async def detect_language(data: dict):
     return {"detected_language": detected}
   except Exception as e:
     return JSONResponse(status_code=500, content={"error": str(e)})
-
-
-# ✅ Create Razorpay order for Premium purchase (₹99)
-@app.post("/create-order")
-def create_order():
-  if razorpay_client is None:
-    raise HTTPException(status_code=500, detail="Razorpay not configured")
-
-  amount_rupees = 99  # change this price whenever you want
-  amount_paise = amount_rupees * 100  # Razorpay uses paise
-
-  try:
-    # create-order endpoint
-    order = razorpay_client.order.create(  # type: ignore[attr-defined]
-        dict(
-            amount=amount_paise,
-            currency="INR",
-            payment_capture=1,
-            notes={"product": "AI Voice Translator Premium"},
-        ))
-
-  except Exception as e:
-    raise HTTPException(status_code=500, detail=str(e))
-
-  return {
-      "order_id": order["id"],
-      "amount": order["amount"],
-      "currency": order["currency"],
-      "key_id": RAZORPAY_KEY_ID,
-  }
-
-
-# ✅ Verify Razorpay payment signature + log
-@app.post("/verify-payment")
-async def verify_payment(data: dict):
-  if razorpay_client is None:
-    raise HTTPException(status_code=500, detail="Razorpay not configured")
-
-  order_id = data.get("razorpay_order_id")
-  payment_id = data.get("razorpay_payment_id")
-  signature = data.get("razorpay_signature")
-
-  if not (order_id and payment_id and signature):
-    raise HTTPException(status_code=400, detail="Missing payment details")
-
-  try:
-    razorpay_client.utility.verify_payment_signature(  # type: ignore[attr-defined]
-        {
-            "razorpay_order_id": order_id,
-            "razorpay_payment_id": payment_id,
-            "razorpay_signature": signature,
-        }
-    )
-  except SignatureVerificationError:
-    return {"success": False}
-
-  # ✅ Signature is valid → payment succeeded → log it
-  payments_log.append({
-      "order_id": order_id,
-      "payment_id": payment_id,
-      "amount": 99 * 100,
-      "currency": "INR",
-      "timestamp": datetime.now(timezone.utc).isoformat(),
-  })
-
-  return {"success": True}
-
-
-# Simple success page (optional redirect target)
-@app.get("/success", response_class=HTMLResponse)
-def payment_success_page():
-  return """
-    <html>
-      <head><title>Payment Successful</title></head>
-      <body style="font-family: sans-serif; background:#0d1117; color:white; display:flex; justify-content:center; align-items:center; min-height:100vh;">
-        <div style="background:#161b22; padding:24px 28px; border-radius:16px; border:1px solid #30363d; max-width:420px; text-align:center;">
-          <h2>✅ Payment successful</h2>
-          <p>Your AI Voice Translator is now unlocked on this browser.</p>
-          <a href="/ui" style="display:inline-block; margin-top:16px; padding:10px 18px; background:#1f6feb; color:white; border-radius:8px; text-decoration:none;">Go to App</a>
-        </div>
-      </body>
-    </html>
-    """
-
-
-# Admin endpoint to view payment logs
-@app.get("/admin/payments")
-def get_payments(admin_key: str = Query(...)):
-  if admin_key != os.getenv("ADMIN_KEY"):
-    raise HTTPException(status_code=401, detail="Not allowed")
-  return payments_log
