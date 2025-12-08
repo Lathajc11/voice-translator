@@ -446,7 +446,7 @@ def landing_page():
           </div>
           <h1 class="hero-title">
             Your personal <span>AI voice translator</span><br/>
-            for <span>₹59 one-time</span>.
+            for <span>₹99 one-time</span>.
           </h1>
           <p class="hero-sub">
             Record or type anything in your language and instantly hear it in English, Japanese,
@@ -581,11 +581,11 @@ def landing_page():
               One small payment, then use the AI voice translator as much as you want
               on this browser.
             </p>
-            <div class="price-main">₹59</div>
+            <div class="price-main">₹99</div>
             <div class="price-tag">One-time payment · Lifetime unlock on this browser</div>
 
             <button class="btn-primary" style="margin-top:8px;" onclick="window.location.href='/ui'">
-              Pay ₹59 & unlock now
+              Pay ₹99 & unlock now
             </button>
 
             <ul class="price-list">
@@ -866,10 +866,10 @@ def ui():
   <div class="paywall-card">
     <h2>🔒 Unlock AI Voice Translator</h2>
     <p style="color:#8b949e; font-size:14px;">
-      Pay ₹59 one-time to unlock full access to the AI Voice Translator & Assistant on this browser.
+      Pay ₹99 one-time to unlock full access to the AI Voice Translator & Assistant on this browser.
     </p>
     <button id="payBtn" style="padding:12px 20px;font-size:16px;background:#5b8efb;color:white;border:none;border-radius:8px;cursor:pointer;">
-      Pay ₹59
+      Pay ₹99
     </button>
   </div>
 </div>
@@ -1932,13 +1932,13 @@ async def detect_language(data: dict):
     return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-# ✅ Create Razorpay order for Premium purchase (₹59)
+# ✅ Create Razorpay order for Premium purchase (₹99)
 @app.post("/create-order")
 def create_order():
   if razorpay_client is None:
     raise HTTPException(status_code=500, detail="Razorpay not configured")
 
-  amount_rupees = 59  # change this price whenever you want
+  amount_rupees = 99  # change this price whenever you want
   amount_paise = amount_rupees * 100  # Razorpay uses paise
 
   try:
@@ -1990,7 +1990,7 @@ async def verify_payment(data: dict):
   payments_log.append({
       "order_id": order_id,
       "payment_id": payment_id,
-      "amount": 59 * 100,
+      "amount": 99 * 100,
       "currency": "INR",
       "timestamp": datetime.now(timezone.utc).isoformat(),
   })
