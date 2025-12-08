@@ -5,7 +5,8 @@ from groq import Groq
 import os
 import urllib.parse
 import razorpay
-from datetime import datetime
+from datetime import datetime, timezone
+from razorpay.errors import SignatureVerificationError
 
 app = FastAPI()
 
@@ -47,19 +48,19 @@ def verify_access_token(x_access_token: str = Header(None)):
 payments_log = []
 
 
-  # Simple JSON health-check (optional, for you)
+# Simple JSON health-check (optional, for you)
 @app.get("/status")
 def status():
-      return {
-          "status": "ok",
-          "message": "Voice translator backend is running (Groq-powered)",
-      }
+  return {
+      "status": "ok",
+      "message": "Voice translator backend is running (Groq-powered)",
+  }
 
 
-  # Public landing page
+# Public landing page
 @app.get("/", response_class=HTMLResponse)
 def landing_page():
-      return """
+  return """
   <!DOCTYPE html>
   <html lang="en">
   <head>
@@ -629,6 +630,8 @@ def landing_page():
 
 
       """
+
+
 @app.get("/ui", response_class=HTMLResponse)
 def ui():
   return """
@@ -1939,13 +1942,15 @@ def create_order():
   amount_paise = amount_rupees * 100  # Razorpay uses paise
 
   try:
-    order = razorpay_client.order.create(
-  dict(
+    # create-order endpoint
+    order = razorpay_client.order.create(  # type: ignore[attr-defined]
+        dict(
             amount=amount_paise,
             currency="INR",
-            payment_capture=1,  # auto capture
+            payment_capture=1,
             notes={"product": "AI Voice Translator Premium"},
         ))
+
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
 
@@ -1971,16 +1976,14 @@ async def verify_payment(data: dict):
     raise HTTPException(status_code=400, detail="Missing payment details")
 
   try:
-    # Use Razorpay utility to verify HMAC signature
-    razorpay_client.utility.verify_payment_signature({
-        "razorpay_order_id":
-        order_id,
-        "razorpay_payment_id":
-        payment_id,
-        "razorpay_signature":
-        signature,
-    })
-  except razorpay.errors.SignatureVerificationError:
+    razorpay_client.utility.verify_payment_signature(  # type: ignore[attr-defined]
+        {
+            "razorpay_order_id": order_id,
+            "razorpay_payment_id": payment_id,
+            "razorpay_signature": signature,
+        }
+    )
+  except SignatureVerificationError:
     return {"success": False}
 
   # ✅ Signature is valid → payment succeeded → log it
@@ -1989,7 +1992,7 @@ async def verify_payment(data: dict):
       "payment_id": payment_id,
       "amount": 59 * 100,
       "currency": "INR",
-      "timestamp": datetime.utcnow().isoformat() + "Z",
+      "timestamp": datetime.now(timezone.utc).isoformat(),
   })
 
   return {"success": True}
